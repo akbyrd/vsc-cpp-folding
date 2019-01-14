@@ -1,0 +1,38 @@
+{
+	"name": "vsc-cpp-folding",
+	"publisher": "abg",
+	"displayName": "C++ Code Folding",
+	"description": "Enable syntax-based code folding for C and C++",
+	"version": "0.0.1",
+	"engines": {
+		"vscode": "^1.30.0"
+	},
+	"categories": [
+		"Other"
+	],
+	"activationEvents": [
+		"onLanguage:cpp"
+	],
+	"main": "./out/extension.js",
+	"gypfile": true,
+	"scripts": {
+		"vscode:prepublish": "npm run compile",
+		"compile": "tsc -p ./",
+		"watch": "tsc -watch -p ./",
+		"postinstall": "./node_modules/.bin/electron-rebuild -v 2.0.12 && node ./node_modules/vscode/bin/install",
+		"test": "npm run compile && node ./node_modules/vscode/bin/test"
+	},
+	"dependencies": {
+		"bindings": "~1.2.1",
+		"node-addon-api": "^1.0.0"
+	},
+	"devDependencies": {
+		"@types/mocha": "^2.2.42",
+		"@types/node": "^8.10.25",
+		"electron-rebuild": "^1.8.2",
+		"tslint": "^5.8.0",
+		"typescript": "^3.1.4",
+		"vsce": "^1.54.0",
+		"vscode": "^1.1.25"
+	}
+}
