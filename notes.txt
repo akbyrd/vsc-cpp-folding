@@ -1,0 +1,67 @@
+Development Requirements
+------------------------
+node.js
+git
+python2?
+
+
+Development Notes
+-----------------
+`node-gyp rebuild` needs to be run to compile the native code. This isn't directly available at the
+command line by default. So either `npm install` to indirectly trigger it to or
+`npm install -g node-gyp` to install it for direct use.
+https://nodejs.org/dist/latest/docs/api/addons.html#addons_building
+https://github.com/nodejs/node-addon-api
+
+I haven't taken the time to figure out how to debug native extensions directly.
+https://medium.com/@atulanand94/debugging-nodejs-c-addons-using-vs-code-27e9940fc3ad
+
+Publishing an extension:
+* npm install -g vsce
+* vsce package
+* code --install-extension path/to/ext.vsix
+https://code.visualstudio.com/api/working-with-extensions/publishing-extension
+
+
+Current State
+-------------
+The fundamentals work quite well. We can fold the contents of every test nicely. However, we have
+one major issue that needs to be understood and overcome.
+
+1) The clang ast is missing huge amounts of data when an unknown symbol is encountered.
+Trying to do a single file parse does not appear to work properly. Clang seems to stop build the ast
+as soon as it encounters a single unknown symbol. This might mean doing a full translation unit
+parse, which I'm ok with in general, however it seems tricky to know which translation unit(s) to
+re-run when a header file is changed. VS, for reference, does a perfectly adequate job of folding
+when opening a raw header file.
+
+2) Errors on the native side don't propagate in a visible way
+I'm currently using TypeError::New(env, "...").ThrowAsJavaScriptException(); to respond to errors
+but this doesn't appear to do anything visible and the end result is a silent failure.
+
+
+To Do
+-----
+[+] Fix corruption issue
+[ ] Fix ast issue
+[ ] Ensure errors propagate somewhere visible
+[ ] Fix Test Crazy Things
+[ ] If block folding includes the else block
+[ ] Else blocks aren't folding
+[ ] Test Function Decls - don't want Foo7 to fold
+[ ] Set folding range kind
+
+[ ] Pass #defines through
+[ ] Account for all unsaved files
+[ ] Avoid copying the files contents into a std::string (get the underlying v8 string)
+[ ] Try to avoid re-passing unsaved files when they haven't changed
+[ ] Try to avoid re-running parsing when files have not changed
+[ ] Use clang_reparseTranslationUnit
+
+
+VS Code Behavior
+----------------
+When does the folding calculation happen?
+* Focusing an editor
+* File edit (on the *old* contents!)
+* File save

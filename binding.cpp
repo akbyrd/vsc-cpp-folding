@@ -1,3 +1,4 @@
+#include <string>
 #include <cstring>
 
 #include <napi.h>
@@ -5,9 +6,16 @@ using namespace Napi;
 
 #include "clang-c/Index.h"
 
+// BUG: Folding breaks after parsing errors. CXTranslationUnit_KeepGoing
+// doesn't appear to be working correctly.
+
+// BUG: if statement folding includes the else block (there's no AST node for
+// the else block)
+
 // BUG: Folding will break for nested function decls (e.g. a lambda as a
 // default parameter value)
 
+// TODO: Change if, switch, while, for, catch, & range for to work like functions
 // TODO: Setting FoldingRangeKind
 // TODO: Test all code imaginable
 // TODO: Test with unsaved files
@@ -34,6 +42,30 @@ clang_Cursor_isFunction(CXCursor cursor)
 		case CXCursor_ConversionFunction:
 		case CXCursor_FunctionTemplate:
 		case CXCursor_LambdaExpr:
+			return 1;
+	}
+	return 0;
+}
+
+unsigned
+clang_Cursor_isKeywordWithCompound(CXCursor cursor)
+{
+	CXCursorKind kind = clang_getCursorKind(cursor);
+	switch (kind)
+	{
+		case CXCursor_CaseStmt:
+		case CXCursor_DefaultStmt:
+		case CXCursor_IfStmt:
+		case CXCursor_SwitchStmt:
+		case CXCursor_WhileStmt:
+		case CXCursor_DoStmt:
+		case CXCursor_ForStmt:
+		case CXCursor_CXXCatchStmt:
+		case CXCursor_CXXTryStmt:
+		case CXCursor_CXXForRangeStmt:
+		case CXCursor_SEHTryStmt:
+		case CXCursor_SEHExceptStmt:
+		case CXCursor_SEHFinallyStmt:
 			return 1;
 	}
 	return 0;
@@ -74,23 +106,29 @@ ParseFile(const CallbackInfo& info)
 	Env env = info.Env();
 
 	// HACK: Dear god...
-	if (info.Length() != 1)
+	if (info.Length() != 2)
 	{
 		TypeError::New(env, "Wrong number of arguments").ThrowAsJavaScriptException();
 		return env.Null();
 	}
 
 	// HACK: Dear god...
-	if (!info[0].IsString())
+	if (!info[0].IsString() || !info[1].IsString())
 	{
 		TypeError::New(env, "Wrong type of arguments").ThrowAsJavaScriptException();
 		return env.Null();
 	}
 
-	String fileName = info[0].As<String>();
+	std::string fileName = info[0].As<String>().Utf8Value();
+	std::string fileContent = info[1].As<String>().Utf8Value();
 	Array ranges = Array::New(env);
 
 	const char* clangArgs[] = { "-fno-delayed-template-parsing" };
+
+	CXUnsavedFile file = {};
+	file.Filename = fileName.c_str();
+	file.Contents = fileContent.c_str();
+	file.Length = fileContent.size();
 
 	unsigned parseOptions = clang_defaultEditingTranslationUnitOptions();
 	parseOptions |= CXTranslationUnit_SingleFileParse;
@@ -100,9 +138,9 @@ ParseFile(const CallbackInfo& info)
 	CXIndex index = clang_createIndex(0, 0);
 	CXTranslationUnit unit = clang_parseTranslationUnit(
 		index,
-		fileName.Utf8Value().c_str(),
+		file.Filename,
 		clangArgs, ArrayLength(clangArgs),
-		nullptr, 0,
+		&file, 1,
 		parseOptions
 	);
 
@@ -120,12 +158,15 @@ ParseFile(const CallbackInfo& info)
 			[](CXCursor cursor, CXCursor parent, CXClientData clientData)
 			{
 				Context& context = *(Context*) clientData;
-
 				CXCursorKind kind = clang_getCursorKind(cursor);
 
 				bool skip = false;
 				skip = skip || clang_Cursor_isFunction(cursor);
-				skip = skip || (clang_Cursor_isFunction(parent) && kind == CXCursor_CompoundStmt);
+				if (kind == CXCursor_CompoundStmt)
+				{
+					skip = skip || clang_Cursor_isFunction(parent);
+					skip = skip || clang_Cursor_isKeywordWithCompound(parent);
+				}
 
 				if (!skip)
 				{
