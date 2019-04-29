@@ -38,7 +38,7 @@ struct Foo6
 	}
 };
 
-// Multi-line param, idfk
+// Multi-line param, should not fold
 void
 Foo7(int bar1
 	= 1 + 2)

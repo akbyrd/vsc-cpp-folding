@@ -1,9 +1,13 @@
 void
 Foo1()
 {
-	void Foo2(int, int);
+	// Multi-line params function decl, should not fold
+	void Foo2(
+		int,
+		int
+	);
 
-	// Multi-line function call, should fold
+	// Multi-line params function call, should fold
 	Foo2(
 		1,
 		2

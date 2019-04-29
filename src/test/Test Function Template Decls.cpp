@@ -5,7 +5,7 @@ Foo1(T bar1)
 {
 }
 
-// Multi-line template params, should fold
+// Multi-line template params, should not fold
 template<
 	class T1,
 	class T2

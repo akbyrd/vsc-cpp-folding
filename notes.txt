@@ -35,28 +35,54 @@ parse, which I'm ok with in general, however it seems tricky to know which trans
 re-run when a header file is changed. VS, for reference, does a perfectly adequate job of folding
 when opening a raw header file.
 
+- This appears to be pretty fundamental to clang. I'm not sure there's an easy way around it. We
+have 2 options. 1) Compile full translation units. 2) Use token parsing instead of the AST. Full TUs
+is tricky for a number of reasons a) when I open a header, which TU needs to be compiled? and b)
+what if I open a header from a different project? c) we need to know compiler options. Token parsing
+seems like the results will be lower quality. I think the solution ends up being a mixture of the
+two. We have 2 folding modes: high quality and low quality. When a file is opened we get low quality
+immediately. Then we compile translation units over time to get high quality. We can prioritize TUs
+near-by and build a database of which TUs include which headers. Then we can choose the TU that
+parses the fastest when a given header changes. Perhaps clangs 'reparse' functionality will even
+accelerate reparsing.
+
+- Most things I care about are braces attached to the statement before them.
+Once clang gives up, everything is a CompoundStmt with no ties back to the AST.
+Keep track of current token, reset on semi-colons/close braces, on braces fold to the last token
+Keep track of current preprocessor token (#if, #ifdef, #ifndef, #else #elif)
+Handle cases without braces: case/default->break/return/continue/goto (nahhhh)
+Tricky things
+Multi-line functions calls. Fine if these don't fold in LQ mode.
+Preprocessor #if #else #endif blocks (only disabled currently)
+Good Stuff
+Folding inside disable preprocessor blocks
+
 2) Errors on the native side don't propagate in a visible way
 I'm currently using TypeError::New(env, "...").ThrowAsJavaScriptException(); to respond to errors
-but this doesn't appear to do anything visible and the end result is a silent failure.
+but this doesn't appear to do anything visible and the end result is a silent failure. I've added
+an output channel to the extension. Need to pipe all errors through that I guess.
 
 
 To Do
 -----
 [+] Fix corruption issue
-[ ] Fix ast issue
-[ ] Ensure errors propagate somewhere visible
-[ ] Fix Test Crazy Things
-[ ] If block folding includes the else block
-[ ] Else blocks aren't folding
-[ ] Test Function Decls - don't want Foo7 to fold
-[ ] Set folding range kind
+[+] Fix ast issue
+[+] - Inventory folding points to see how well token parsing will work
+[+] - Examine how token output is linked to AST output
+[ ] - Get LibTooling working and evaluate its capabilities
 
-[ ] Pass #defines through
-[ ] Account for all unsaved files
+[ ] Ensure errors propagate somewhere visible
+[+] Fix Test Crazy Things
+[+] Fix if block folding (else should fold separately)
+[+] Test Function Decls - don't want Foo7 to fold
+[ ] Set folding range kind
 [ ] Avoid copying the files contents into a std::string (get the underlying v8 string)
-[ ] Try to avoid re-passing unsaved files when they haven't changed
+[ ] Avoid copying errors to an intermediate buffer
+[ ] Try to avoid re-parsing unsaved files when they haven't changed
 [ ] Try to avoid re-running parsing when files have not changed
-[ ] Use clang_reparseTranslationUnit
+[-] Pass #defines through
+[-] Account for all unsaved files
+[-] Use clang_reparseTranslationUnit
 
 
 VS Code Behavior

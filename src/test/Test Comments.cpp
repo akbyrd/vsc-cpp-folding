@@ -13,5 +13,5 @@
 // Should not fold
 /* */
 
-/* Differnt block comments */
+/* Different block comments */
 /* Should not fold */

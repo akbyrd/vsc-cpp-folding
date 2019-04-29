@@ -1,25 +1,19 @@
 #include <string>
+#include <sstream>
 #include <cstring>
+#include <stack>
 
 #include <napi.h>
 using namespace Napi;
 
 #include "clang-c/Index.h"
 
-// BUG: Folding breaks after parsing errors. CXTranslationUnit_KeepGoing
-// doesn't appear to be working correctly.
-
 // BUG: if statement folding includes the else block (there's no AST node for
 // the else block)
-
-// BUG: Folding will break for nested function decls (e.g. a lambda as a
-// default parameter value)
 
 // TODO: Change if, switch, while, for, catch, & range for to work like functions
 // TODO: Setting FoldingRangeKind
 // TODO: Test all code imaginable
-// TODO: Test with unsaved files
-// TODO: Test with making file modifications
 // TODO: Test performance
 // TODO: Bonus: Re-parse skipped preprocessor sections to get folding
 // TODO: Bonus: Re-parse function/class templates to get folding
@@ -28,6 +22,14 @@ using namespace Napi;
 
 template<typename T, size_t S>
 size_t ArrayLength(const T(&arr)[S]) { UNUSED(arr); return S; }
+
+std::string
+clang_getCStr(CXString cxString)
+{
+	std::string string = clang_getCString(cxString);
+	clang_disposeString(cxString);
+	return string;
+}
 
 unsigned
 clang_Cursor_isFunction(CXCursor cursor)
@@ -100,14 +102,40 @@ AppendFoldingRange(Env env, Array ranges, CXSourceRange srcRange)
 	AppendFoldingRange(env, ranges, srcStart, srcEnd);
 }
 
+struct Log
+{
+	bool   enable;
+	Env&   env;
+	Array& errors;
+
+	template <class... T>
+	void operator()(T&&... args)
+	{
+		if (!enable) return;
+
+		std::ostringstream s;
+		(s << ... << args);
+		errors[errors.Length()] = String::New(env, s.str().c_str());
+	}
+};
+
 Value
 ParseFile(const CallbackInfo& info)
 {
 	Env env = info.Env();
+	Array ranges = Array::New(env);
+	Array errors = Array::New(env);
+
+	Object result = Object::New(env);
+	result.Set("ranges", ranges);
+	result.Set("errors", errors);
+
+	Log log = { true, env, errors };
 
 	// HACK: Dear god...
 	if (info.Length() != 2)
 	{
+		log("Wrong number of arguments");
 		TypeError::New(env, "Wrong number of arguments").ThrowAsJavaScriptException();
 		return env.Null();
 	}
@@ -115,217 +143,145 @@ ParseFile(const CallbackInfo& info)
 	// HACK: Dear god...
 	if (!info[0].IsString() || !info[1].IsString())
 	{
+		log("Wrong type of arguments");
 		TypeError::New(env, "Wrong type of arguments").ThrowAsJavaScriptException();
 		return env.Null();
 	}
 
 	std::string fileName = info[0].As<String>().Utf8Value();
 	std::string fileContent = info[1].As<String>().Utf8Value();
-	Array ranges = Array::New(env);
+	log("Filename: ", fileName);
 
-	const char* clangArgs[] = { "-fno-delayed-template-parsing" };
+	const char* clangArgs[] = {
+		"-fno-delayed-template-parsing",
+		"-std=c++17",
+		"-x", "c++",
+	};
 
 	CXUnsavedFile file = {};
 	file.Filename = fileName.c_str();
 	file.Contents = fileContent.c_str();
 	file.Length = fileContent.size();
 
-	unsigned parseOptions = clang_defaultEditingTranslationUnitOptions();
-	parseOptions |= CXTranslationUnit_SingleFileParse;
-	parseOptions |= CXTranslationUnit_KeepGoing;
-	parseOptions |= CXTranslationUnit_DetailedPreprocessingRecord;
-
-	CXIndex index = clang_createIndex(0, 0);
-	CXTranslationUnit unit = clang_parseTranslationUnit(
+	// TODO: Print clang errors (usage errors, not compile errors)
+	CXIndex index = clang_createIndex(0, 1);
+	CXTranslationUnit unit = clang_createTranslationUnitFromSourceFile(
 		index,
 		file.Filename,
-		clangArgs, ArrayLength(clangArgs),
-		&file, 1,
-		parseOptions
+		ArrayLength(clangArgs), clangArgs,
+		1, &file
 	);
 
-	// Use the AST for everything but functions, comments, and #if blocks
+	CXCursor      unitCursor = clang_getTranslationUnitCursor(unit);
+	CXSourceRange unitRange  = clang_getCursorExtent(unitCursor);
+
+	struct
 	{
-		struct Context
+		std::stack<CXToken*> tokenStack;
+		CXToken*             prevToken;
+
+		void
+		HandleToken(Log log, Env env, Array ranges, CXTranslationUnit unit, CXToken& token, CXTokenKind tokenKind)
 		{
-			Env&   env;
-			Array& ranges;
-		} context = { env, ranges };
-
-		CXCursor unitCursor = clang_getTranslationUnitCursor(unit);
-		clang_visitChildren(
-			unitCursor,
-			[](CXCursor cursor, CXCursor parent, CXClientData clientData)
+			log("token: ", clang_getCStr(clang_getTokenSpelling(unit, token)));
+			switch (tokenKind)
 			{
-				Context& context = *(Context*) clientData;
-				CXCursorKind kind = clang_getCursorKind(cursor);
+				default:
+					prevToken = &token;
+					break;
 
-				bool skip = false;
-				skip = skip || clang_Cursor_isFunction(cursor);
-				if (kind == CXCursor_CompoundStmt)
+				case CXToken_Comment:
+					prevToken = nullptr;
+					break;
+
+				case CXToken_Punctuation:
 				{
-					skip = skip || clang_Cursor_isFunction(parent);
-					skip = skip || clang_Cursor_isKeywordWithCompound(parent);
-				}
+					std::string tokenStr = clang_getCStr(clang_getTokenSpelling(unit, token));
+					switch (tokenStr[0])
+					{
+						default:
+							prevToken = &token;
+							break;
 
-				if (!skip)
-				{
-					CXSourceRange    srcRange = clang_getCursorExtent(cursor);
-					CXSourceLocation srcStart = clang_getCursorLocation(cursor);
-					CXSourceLocation srcEnd   = clang_getRangeEnd(srcRange);
-					AppendFoldingRange(context.env, context.ranges, srcStart, srcEnd);
-				}
-				return CXChildVisit_Recurse;
-			},
-			&context
-		);
-	}
+						case '{':
+						{
+							tokenStack.push(prevToken ? prevToken : &token);
+							prevToken = nullptr;
 
-	// Use tokens for functions and comments
+							// DEBUG
+							std::string pushTokenStr = clang_getCStr(clang_getTokenSpelling(unit, *tokenStack.top()));
+							log("push: ", pushTokenStr);
+							break;
+						}
+
+						case ';':
+							prevToken = nullptr;
+							break;
+
+						case '}':
+						{
+							if (tokenStack.empty()) break;
+
+							CXToken* startToken = tokenStack.top(); tokenStack.pop();
+							CXToken* endToken   = &token;
+							if (!startToken) break;
+
+							CXSourceRange blockRangeStart = clang_getTokenExtent(unit, *startToken);
+							CXSourceRange blockRangeEnd   = clang_getTokenExtent(unit, *endToken);
+
+							CXSourceLocation blockStart = clang_getRangeStart(blockRangeStart);
+							CXSourceLocation blockEnd   = clang_getRangeEnd  (blockRangeEnd);
+							AppendFoldingRange(env, ranges, blockStart, blockEnd);
+							prevToken = nullptr;
+
+							// DEBUG
+							std::string tokenStartStr = clang_getCStr(clang_getTokenSpelling(unit, *startToken));
+							std::string tokenEndStr   = clang_getCStr(clang_getTokenSpelling(unit, *endToken));
+							log("pop & range: ", tokenStartStr, " - ", tokenEndStr);
+							break;
+						}
+					}
+					break;
+				}
+			}
+		}
+	} ScopeBlock = {};
+
+	struct
 	{
-		CXCursor      unitCursor = clang_getTranslationUnitCursor(unit);
-		CXSourceRange unitRange  = clang_getCursorExtent(unitCursor);
+		bool     inComment;
+		unsigned commentStart;
+		unsigned commentEnd;
 
-		// NOTE: libclang will tokenize block comments (/* */) as single tokens
-		// that span multiple lines but regular comments (//) are always single
-		// line tokens. Since we want to fold sequences of regular comments we
-		// have to use a small state machine to remember the beginning of a
-		// sequence of regular comments.
-
-		struct
+		void
+		HandleToken(Log log, Env env, Array ranges, CXTranslationUnit unit, CXToken token, CXTokenKind tokenKind)
 		{
-			bool     inComment;
-			unsigned commentStart;
-			unsigned commentEnd;
-
-			void
-			HandleToken(Env env, Array ranges, CXTranslationUnit unit, CXToken token, CXTokenKind tokenKind)
+			if (tokenKind == CXToken_Comment)
 			{
-				if (tokenKind == CXToken_Comment)
-				{
-					CXString      tokenStr  = clang_getTokenSpelling(unit, token);
-					const char*   tokenCStr = clang_getCString(tokenStr);
-					CXSourceRange srcRange  = clang_getTokenExtent(unit, token);
+				CXString      tokenStr  = clang_getTokenSpelling(unit, token);
+				const char*   tokenCStr = clang_getCString(tokenStr);
+				CXSourceRange srcRange  = clang_getTokenExtent(unit, token);
 
-					bool isBlockComment = strncmp("/*", tokenCStr, 2) == 0;
-					if (isBlockComment)
-					{
-						End(env, ranges);
-						AppendFoldingRange(env, ranges, srcRange);
-					}
-					else
-					{
-						Begin(env, ranges, srcRange);
-					}
-				}
-				else
+				bool isBlockComment = strncmp("/*", tokenCStr, 2) == 0;
+				if (isBlockComment)
 				{
 					End(env, ranges);
-				}
-			}
-
-			void
-			Begin(Env env, Array ranges, CXSourceRange srcRange)
-			{
-				CXSourceLocation srcStart = clang_getRangeStart(srcRange);
-				CXSourceLocation srcEnd   = clang_getRangeEnd  (srcRange);
-
-				unsigned lineStart, lineEnd;
-				clang_getFileLocation(srcStart, nullptr, &lineStart, nullptr, nullptr);
-				clang_getFileLocation(srcEnd,   nullptr, &lineEnd,   nullptr, nullptr);
-
-				Begin(env, ranges, lineStart, lineEnd);
-			}
-
-			void
-			Begin(Env env, Array ranges, unsigned lineStart, unsigned lineEnd)
-			{
-				if (!inComment)
-				{
-					inComment    = true;
-					commentStart = lineStart;
-					commentEnd   = lineEnd;
+					AppendFoldingRange(env, ranges, srcRange);
 				}
 				else
 				{
-					if (lineStart > commentEnd + 1)
-					{
-						End(env, ranges);
-						Begin(env, ranges, lineStart, lineEnd);
-					}
-					else
-					{
-						commentEnd = lineEnd;
-					}
-				}
-			};
-
-			void
-			End(Env env, Array ranges)
-			{
-				if (inComment)
-				{
-					inComment = false;
-					AppendFoldingRange(env, ranges, commentStart, commentEnd);
-				}
-			};
-		} CommentSequence = {};
-
-		struct
-		{
-			bool inFunction;
-
-			void
-			HandleToken(Env env, Array ranges, CXTranslationUnit unit, CXToken token, CXTokenKind kind)
-			{
-				CXCursor cursor;
-				clang_annotateTokens(unit, &token, 1, &cursor);
-				if (clang_Cursor_isFunction(cursor))
-				{
-					inFunction = true;
-					if (kind == CXToken_Punctuation)
-					{
-						CXString    tokenStr  = clang_getTokenSpelling(unit, token);
-						const char* tokenCStr = clang_getCString(tokenStr);
-
-						if (strcmp(")", tokenCStr) == 0)
-						{
-							inFunction = false;
-							CXSourceRange    funcRange = clang_getCursorExtent(cursor);
-							CXSourceLocation funcEnd   = clang_getRangeEnd(funcRange);
-							CXSourceLocation paramEnd  = clang_getTokenLocation(unit, token);
-							AppendFoldingRange(env, ranges, paramEnd, funcEnd);
-						}
-						clang_disposeString(tokenStr);
-					}
+					Begin(env, ranges, srcRange);
 				}
 			}
-		} FunctionDecl = {};
-
-		CXToken* tokens;
-		unsigned tokenCount;
-		clang_tokenize(unit, unitRange, &tokens, &tokenCount);
-		for (unsigned i = 0; i < tokenCount; i++)
-		{
-			CXToken     token     = tokens[i];
-			CXTokenKind tokenKind = clang_getTokenKind(token);
-
-			CommentSequence.HandleToken(env, ranges, unit, token, tokenKind);
-			FunctionDecl   .HandleToken(env, ranges, unit, token, tokenKind);
+			else
+			{
+				End(env, ranges);
+			}
 		}
-		CommentSequence.End(env, ranges);
-		clang_disposeTokens(unit, tokens, tokenCount);
-	}
 
-	// Use skipped ranges for #if blocks
-	{
-		CXSourceRangeList* srcRangeList = clang_getAllSkippedRanges(unit);
-		for (unsigned i = 0; i < srcRangeList->count; i++)
+		void
+		Begin(Env env, Array ranges, CXSourceRange srcRange)
 		{
-			// NOTE: Decrement lineEnd by 1 to exclude the closing preprocessor
-			// directive (e.g. #else or #endif)
-
-			CXSourceRange    srcRange = srcRangeList->ranges[i];
 			CXSourceLocation srcStart = clang_getRangeStart(srcRange);
 			CXSourceLocation srcEnd   = clang_getRangeEnd  (srcRange);
 
@@ -333,15 +289,62 @@ ParseFile(const CallbackInfo& info)
 			clang_getFileLocation(srcStart, nullptr, &lineStart, nullptr, nullptr);
 			clang_getFileLocation(srcEnd,   nullptr, &lineEnd,   nullptr, nullptr);
 
-			AppendFoldingRange(env, ranges, lineStart, lineEnd - 1);
+			Begin(env, ranges, lineStart, lineEnd);
 		}
-		clang_disposeSourceRangeList(srcRangeList);
+
+		void
+		Begin(Env env, Array ranges, unsigned lineStart, unsigned lineEnd)
+		{
+			if (!inComment)
+			{
+				inComment    = true;
+				commentStart = lineStart;
+				commentEnd   = lineEnd;
+			}
+			else
+			{
+				if (lineStart > commentEnd + 1)
+				{
+					End(env, ranges);
+					Begin(env, ranges, lineStart, lineEnd);
+				}
+				else
+				{
+					commentEnd = lineEnd;
+				}
+			}
+		};
+
+		void
+		End(Env env, Array ranges)
+		{
+			if (inComment)
+			{
+				inComment = false;
+				AppendFoldingRange(env, ranges, commentStart, commentEnd);
+			}
+		};
+	} CommentSequence = {};
+
+	CXToken* tokens;
+	unsigned tokenCount;
+	clang_tokenize(unit, unitRange, &tokens, &tokenCount);
+	for (unsigned i = 0; i < tokenCount; i++)
+	{
+		CXToken&    token     = tokens[i];
+		CXTokenKind tokenKind = clang_getTokenKind(token);
+
+		ScopeBlock     .HandleToken(log, env, ranges, unit, token, tokenKind);
+		CommentSequence.HandleToken(log, env, ranges, unit, token, tokenKind);
+		//FunctionDecl   .HandleToken(log, env, ranges, unit, token, tokenKind);
 	}
+	CommentSequence.End(env, ranges);
+	clang_disposeTokens(unit, tokens, tokenCount);
 
 	clang_disposeTranslationUnit(unit);
 	clang_disposeIndex(index);
 
-	return ranges;
+	return result;
 }
 
 Object
