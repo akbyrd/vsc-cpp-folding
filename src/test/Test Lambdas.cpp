@@ -13,6 +13,7 @@ void Foo2()
 	auto lambda1 = []() {
 	};
 
+	// NOTE: Won't fold with the token method
 	// Mulit-line lambda call, should fold
 	lambda1(
 	);

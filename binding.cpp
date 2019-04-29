@@ -8,16 +8,6 @@ using namespace Napi;
 
 #include "clang-c/Index.h"
 
-// BUG: if statement folding includes the else block (there's no AST node for
-// the else block)
-
-// TODO: Change if, switch, while, for, catch, & range for to work like functions
-// TODO: Setting FoldingRangeKind
-// TODO: Test all code imaginable
-// TODO: Test performance
-// TODO: Bonus: Re-parse skipped preprocessor sections to get folding
-// TODO: Bonus: Re-parse function/class templates to get folding
-
 #define UNUSED(x) (x);
 
 template<typename T, size_t S>
@@ -102,6 +92,17 @@ AppendFoldingRange(Env env, Array ranges, CXSourceRange srcRange)
 	AppendFoldingRange(env, ranges, srcStart, srcEnd);
 }
 
+void
+AppendFoldingRange(Env env, Array ranges, CXTranslationUnit unit, CXToken tokenStart, CXToken tokenEnd)
+{
+	CXSourceRange tokenRangeStart = clang_getTokenExtent(unit, tokenStart);
+	CXSourceRange tokenRangeEnd   = clang_getTokenExtent(unit, tokenEnd);
+
+	CXSourceLocation srcStart = clang_getRangeStart(tokenRangeStart);
+	CXSourceLocation srcEnd   = clang_getRangeEnd  (tokenRangeEnd);
+	AppendFoldingRange(env, ranges, srcStart, srcEnd);
+}
+
 struct Log
 {
 	bool   enable;
@@ -130,7 +131,8 @@ ParseFile(const CallbackInfo& info)
 	result.Set("ranges", ranges);
 	result.Set("errors", errors);
 
-	Log log = { true, env, errors };
+	bool enable = false;
+	Log log = { enable, env, errors };
 
 	// HACK: Dear god...
 	if (info.Length() != 2)
@@ -221,17 +223,10 @@ ParseFile(const CallbackInfo& info)
 						case '}':
 						{
 							if (tokenStack.empty()) break;
-
 							CXToken* startToken = tokenStack.top(); tokenStack.pop();
 							CXToken* endToken   = &token;
 							if (!startToken) break;
-
-							CXSourceRange blockRangeStart = clang_getTokenExtent(unit, *startToken);
-							CXSourceRange blockRangeEnd   = clang_getTokenExtent(unit, *endToken);
-
-							CXSourceLocation blockStart = clang_getRangeStart(blockRangeStart);
-							CXSourceLocation blockEnd   = clang_getRangeEnd  (blockRangeEnd);
-							AppendFoldingRange(env, ranges, blockStart, blockEnd);
+							AppendFoldingRange(env, ranges, unit, *startToken, *endToken);
 							prevToken = nullptr;
 
 							// DEBUG
@@ -326,6 +321,65 @@ ParseFile(const CallbackInfo& info)
 		};
 	} CommentSequence = {};
 
+	struct
+	{
+		std::stack<CXToken> tokenStack;
+		bool                prevTokenIsHash;
+		CXToken             prevNonPPToken;
+
+		void
+		HandleToken(Log log, Env env, Array ranges, CXTranslationUnit unit, CXToken token, CXTokenKind tokenKind)
+		{
+			std::string tokenStr = clang_getCStr(clang_getTokenSpelling(unit, token));
+
+			bool tokenIsHash = (strcmp("#", tokenStr.c_str()) == 0);
+			if (tokenIsHash)
+			{
+				prevTokenIsHash = true;
+				return;
+			}
+
+			if (prevTokenIsHash)
+			{
+				bool isBeginIf = false;
+				isBeginIf = isBeginIf || (strcmp("if", tokenStr.c_str()) == 0);
+				isBeginIf = isBeginIf || (strcmp("ifdef", tokenStr.c_str()) == 0);
+				isBeginIf = isBeginIf || (strcmp("ifndef", tokenStr.c_str()) == 0);
+
+				bool isElse = false;
+				isElse = isElse || (strcmp("else", tokenStr.c_str()) == 0);
+				isElse = isElse || (strcmp("elif", tokenStr.c_str()) == 0);
+
+				bool isEndIf = strcmp("endif", tokenStr.c_str()) == 0;
+
+				if (isBeginIf)
+				{
+					tokenStack.push(token);
+				}
+				else if (isElse)
+				{
+					if (tokenStack.empty()) return;
+					CXToken ppTokenStart = tokenStack.top(); tokenStack.pop();
+					CXToken ppTokenEnd   = prevNonPPToken;
+					AppendFoldingRange(env, ranges, unit, ppTokenStart, ppTokenEnd);
+					tokenStack.push(token);
+				}
+				else if (isEndIf)
+				{
+					if (tokenStack.empty()) return;
+					CXToken ppTokenStart = tokenStack.top(); tokenStack.pop();
+					CXToken ppTokenEnd   = prevNonPPToken;
+					AppendFoldingRange(env, ranges, unit, ppTokenStart, ppTokenEnd);
+				}
+			}
+
+			if (!tokenIsHash)
+			{
+				prevNonPPToken = token;
+			}
+		}
+	} PreprocessorBlock = {};
+
 	CXToken* tokens;
 	unsigned tokenCount;
 	clang_tokenize(unit, unitRange, &tokens, &tokenCount);
@@ -334,9 +388,9 @@ ParseFile(const CallbackInfo& info)
 		CXToken&    token     = tokens[i];
 		CXTokenKind tokenKind = clang_getTokenKind(token);
 
-		ScopeBlock     .HandleToken(log, env, ranges, unit, token, tokenKind);
-		CommentSequence.HandleToken(log, env, ranges, unit, token, tokenKind);
-		//FunctionDecl   .HandleToken(log, env, ranges, unit, token, tokenKind);
+		ScopeBlock       .HandleToken(log, env, ranges, unit, token, tokenKind);
+		CommentSequence  .HandleToken(log, env, ranges, unit, token, tokenKind);
+		PreprocessorBlock.HandleToken(log, env, ranges, unit, token, tokenKind);
 	}
 	CommentSequence.End(env, ranges);
 	clang_disposeTokens(unit, tokens, tokenCount);

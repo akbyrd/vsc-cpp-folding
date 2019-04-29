@@ -1,3 +1,4 @@
+// NOTE: Won't fold with the token method
 // Multi-line function params, should fold
 void
 Foo1(
@@ -38,7 +39,7 @@ struct Foo6
 	}
 };
 
-// Multi-line param, should not fold
+// Multi-line params with default, should fold
 void
 Foo7(int bar1
 	= 1 + 2)

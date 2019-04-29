@@ -7,6 +7,7 @@ Foo1()
 		int
 	);
 
+	// NOTE: Won't fold with the token method
 	// Multi-line params function call, should fold
 	Foo2(
 		1,
