@@ -4,7 +4,7 @@ let log: vscode.OutputChannel;
 
 export function activate(context: vscode.ExtensionContext) {
 	// TODO: Dev only
-	let debug: boolean = true;
+	let debug: boolean = false;
 
 	log = vscode.window.createOutputChannel('C++ Code Folding');
 	log.show(debug);
@@ -27,7 +27,7 @@ export function activate(context: vscode.ExtensionContext) {
 			for (let error of errors) {
 				log.appendLine('Error: ' + error);
 			}
-			log.show(errors.length > 0);
+			//log.show(errors.length > 0);
 
 			// Ranges
 			let ranges: vscode.FoldingRange[] = result.ranges;
