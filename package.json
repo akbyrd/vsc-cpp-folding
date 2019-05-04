@@ -3,7 +3,8 @@
 	"publisher": "abg",
 	"displayName": "C++ Code Folding",
 	"description": "Enable syntax-based code folding for C and C++",
-	"version": "0.0.2",
+	"repository": "https://github.com/akbyrd/vsc-cpp-folding",
+	"version": "0.0.3",
 	"engines": {
 		"vscode": "^1.30.0"
 	},

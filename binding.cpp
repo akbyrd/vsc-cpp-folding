@@ -66,7 +66,7 @@ clang_Cursor_isKeywordWithCompound(CXCursor cursor)
 void
 AppendFoldingRange(Env env, Array ranges, unsigned lineStart, unsigned lineEnd)
 {
-	if (lineEnd != lineStart)
+	if (lineEnd > lineStart)
 	{
 		Object range = Object::New(env);
 		range.Set(String::New(env, "start"), lineStart - 1);
@@ -223,15 +223,26 @@ ParseFile(const CallbackInfo& info)
 						case '}':
 						{
 							if (tokenStack.empty()) break;
-							CXToken* startToken = tokenStack.top(); tokenStack.pop();
-							CXToken* endToken   = &token;
-							if (!startToken) break;
-							AppendFoldingRange(env, ranges, unit, *startToken, *endToken);
+							CXToken* tokenStart = tokenStack.top(); tokenStack.pop();
+							CXToken* tokenEnd   = &token;
+							if (!tokenStart) break;
+
+							CXSourceRange tokenRangeStart = clang_getTokenExtent(unit, *tokenStart);
+							CXSourceRange tokenRangeEnd   = clang_getTokenExtent(unit, *tokenEnd);
+
+							CXSourceLocation srcStart = clang_getRangeStart(tokenRangeStart);
+							CXSourceLocation srcEnd   = clang_getRangeEnd  (tokenRangeEnd);
+
+							unsigned lineStart, lineEnd;
+							clang_getFileLocation(srcStart, nullptr, &lineStart, nullptr, nullptr);
+							clang_getFileLocation(srcEnd,   nullptr, &lineEnd,   nullptr, nullptr);
+
+							AppendFoldingRange(env, ranges, lineStart, lineEnd - 1);
 							prevToken = nullptr;
 
 							// DEBUG
-							std::string tokenStartStr = clang_getCStr(clang_getTokenSpelling(unit, *startToken));
-							std::string tokenEndStr   = clang_getCStr(clang_getTokenSpelling(unit, *endToken));
+							std::string tokenStartStr = clang_getCStr(clang_getTokenSpelling(unit, *tokenStart));
+							std::string tokenEndStr   = clang_getCStr(clang_getTokenSpelling(unit, *tokenEnd));
 							log("pop & range: ", tokenStartStr, " - ", tokenEndStr);
 							break;
 						}
@@ -253,11 +264,10 @@ ParseFile(const CallbackInfo& info)
 		{
 			if (tokenKind == CXToken_Comment)
 			{
-				CXString      tokenStr  = clang_getTokenSpelling(unit, token);
-				const char*   tokenCStr = clang_getCString(tokenStr);
-				CXSourceRange srcRange  = clang_getTokenExtent(unit, token);
+				std::string   tokenStr = clang_getCStr(clang_getTokenSpelling(unit, token));
+				CXSourceRange srcRange = clang_getTokenExtent(unit, token);
 
-				bool isBlockComment = strncmp("/*", tokenCStr, 2) == 0;
+				bool isBlockComment = strncmp("/*", tokenStr.c_str(), 2) == 0;
 				if (isBlockComment)
 				{
 					End(env, ranges);
@@ -316,6 +326,7 @@ ParseFile(const CallbackInfo& info)
 			if (inComment)
 			{
 				inComment = false;
+				if (commentEnd - commentStart + 1 < 3) return;
 				AppendFoldingRange(env, ranges, commentStart, commentEnd);
 			}
 		};

@@ -9,3 +9,17 @@
 	{
 	}
 #endif
+
+
+// TODO: Find something sane to do here
+void Foo3()
+{
+	if (false)
+	{
+
+	#if false
+	}
+	#else
+	}
+	#endif
+}

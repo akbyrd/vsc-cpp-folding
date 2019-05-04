@@ -2,12 +2,15 @@
  * Should fold
  */
 
-// Sequence Comment
-// Should fold
-
 // Single comment, should not fold
 
-// Gap between comments, should not fold
+// Sequence Comment
+// Should fold
+// When 3 or more lines
+
+// Gap between
+// Folding comments
+// Should fold separately
 
 /* Different comment types */
 // Should not fold
