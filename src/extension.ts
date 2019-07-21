@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 
 let addon: any;
 let logWindow: vscode.OutputChannel;
-let config: vscode.workspace.WorkspaceConfiguration;
+let config: vscode.WorkspaceConfiguration;
 let debug: boolean;
 
 function log(...strs: any[]) {
@@ -21,10 +21,10 @@ function debugLog(...strs: any[]) {
 	}
 }
 
-function onDidChangeConfiguration(event: vscode.Event<vscode.ConfigurationChangeEvent>) {
+function onDidChangeConfiguration(event: vscode.ConfigurationChangeEvent | null) {
 	log('onDidChangeConfiguration');
 	config = vscode.workspace.getConfiguration();
-	debug = config.get<boolean>('cppfold.debug');
+	debug = config.get<boolean>('cppfold.debug', debug);
 	log('debug: ', debug);
 }
 
