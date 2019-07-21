@@ -35,5 +35,17 @@
 		"typescript": "^3.5.3",
 		"vsce": "^1.65.0",
 		"vscode": "^1.1.35"
+	},
+	"contributes": {
+		"configuration": {
+			"title": "C++ Code Folding",
+			"properties": {
+				"cppfold.debug": {
+					"type": "boolean",
+					"default": false,
+					"description": "Enable additional logging and other helpful development behavior."
+				}
+			}
+		}
 	}
 }
