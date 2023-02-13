@@ -88,5 +88,64 @@ Foo8()
 		{
 			break;
 		}
+
+		// Case without braces, should fold
+		case 1:
+			int x = 1;
+			int y = 2;
+			break;
+
+		// Case fall through, should fold
+		case 2:
+			int z = 1;
+			int w = 2;
+		// Case fall through, should fold
+		case 3:
+			int a = 1;
+			int b = 2;
+			break;
+	}
+
+	switch (0)
+	{
+		// Default case, should fold
+		// Case block, should not fold
+		default:
+		{
+			break;
+		}
+	}
+
+	switch (0)
+	{
+		// Default case without braces, should fold
+		default:
+			int x = 1;
+			int y = 2;
+			break;
+	}
+
+	switch (0)
+	{
+		// Default case fall through, should fold
+		default:
+			int z = 1;
+			int w = 2;
+		case 3:
+			int a = 1;
+			int b = 2;
+			break;
+	}
+
+	switch (0)
+	{
+		case 2:
+			int z = 1;
+			int w = 2;
+		// Default case fall through, should fold
+		default:
+			int a = 1;
+			int b = 2;
+			break;
 	}
 }

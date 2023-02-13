@@ -18,18 +18,11 @@
 			"preLaunchTask": "npm: watch"
 		},
 		{
-			"name": "Extension Tests",
-			"type": "extensionHost",
+			"name": "Debug Native Side",
+			"type": "cppvsdbg",
 			"request": "launch",
-			"runtimeExecutable": "${execPath}",
-			"args": [
-				"--extensionDevelopmentPath=${workspaceFolder}",
-				"--extensionTestsPath=${workspaceFolder}/out/test"
-			],
-			"outFiles": [
-				"${workspaceFolder}/out/test/**/*.js"
-			],
-			"preLaunchTask": "npm: watch"
-		}
+			"program": "code",
+			"args": ["--extensionHost ${workspaceFolder}/out/**/*.js"]
+		},
 	]
 }

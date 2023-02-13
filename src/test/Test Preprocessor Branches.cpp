@@ -17,6 +17,20 @@ void Foo3()
 	if (false)
 	{
 
+	#if true
+	}
+	#else
+	}
+	#endif
+}
+
+
+// TODO: Find something sane to do here
+void Foo4()
+{
+	if (false)
+	{
+
 	#if false
 	}
 	#else
